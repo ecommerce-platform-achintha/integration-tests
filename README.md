@@ -38,12 +38,16 @@ re-running, or the account locks.
 ```bash
 .venv/bin/pytest -m stage0 -v        # smoke: health, JWKS, Eureka, super admin login, helpers
 .venv/bin/pytest -m stage1 -v        # user-service
-.venv/bin/pytest -m stage1_destructive -v   # user-service tests on throwaway merchants (bans, lockouts)
+.venv/bin/pytest -m stage1_destructive -v   # merchant ban on throwaway merchants
+.venv/bin/pytest -m lockout -v       # failed-login tests, opt-in (see "Failed-login tests" below)
 .venv/bin/pytest -m stage2 -v        # store-service
 .venv/bin/pytest -m stage3 -v        # product-service
 .venv/bin/pytest -m stage4 -v        # order-service end to end
 .venv/bin/pytest -m "not slow" -v    # skip event-driven / long scenarios
 ```
+
+`pytest.ini` adds `-m "not lockout"` to every run. A `-m` given on the command line replaces it, so the lockout
+tests carry only the `lockout` marker (not `stage1`), and `-m stage1` never selects them.
 
 Reports are written to `reports/junit.xml` and `reports/report.html` on every run.
 
@@ -62,12 +66,57 @@ login, so running the full suite with `BASE_MODE=gateway` would hit 429s.
 > `AUTH_TRUST_FORWARDED_FOR=true`) and the gateway's `auth` bucket (10/min) are both keyed on IP. Failed-login tests
 > run through the gateway can therefore lock out logins for every client behind the same address, for 15 minutes.
 
+## Failed-login tests (`lockout`)
+
+`tests/test_lockout.py` covers wrong password, unknown email (same 401 body, no user enumeration) and the account
+lockout after 5 failures. It only uses throwaway customers, but every failed login also counts against the
+**per-IP** counter of the machine running the suite:
+
+- user-service locks an IP for 15 minutes once it reaches **20 failed logins** (`auth.ip-max-failed-logins`) within a
+  15-minute window. The window starts at the first failure and is fixed, not sliding. A successful login does
+  **not** reset the IP counter. While the IP is locked, every login from it, including the suite's own fixtures,
+  gets `429 TOO_MANY_LOGIN_ATTEMPTS`.
+- One run of `pytest -m lockout` costs **7** failed logins: 1 wrong password, 1 unknown email, 5 for the lockout.
+- So **at most 2 runs per 15 minutes** are safe (14 failures). A third run would hit 20. The super admin
+  fixture's very first run (password not yet changed) adds 1 more.
+
+### Where the counters live and how to reset them
+
+Both counters are in user-service's PostgreSQL database (`userdb`, container `user-service-postgres`, port
+5432), not in memory, so restarting user-service does not clear them:
+
+| What | Storage |
+|---|---|
+| per account (wrong password) | `users.failed_login_count`, `users.locked_until` |
+| per unknown email | `login_throttle` row `email:<email>` |
+| per client IP | `login_throttle` row `ip:<address>` (`ip:127.0.0.1` or `ip:0:0:0:0:0:0:0:1`, depending on how `localhost` resolves) |
+
+To inspect and reset them on a **local** stack, without changing any service code:
+
+```bash
+# inspect
+docker exec user-service-postgres psql -U userservice -d userdb \
+  -c "select throttle_key, failed_count, window_started_at, locked_until from login_throttle order by updated_at desc;"
+
+# reset IP and unknown-email counters
+docker exec user-service-postgres psql -U userservice -d userdb -c "delete from login_throttle;"
+
+# unlock accounts
+docker exec user-service-postgres psql -U userservice -d userdb \
+  -c "update users set failed_login_count = 0, locked_until = null where failed_login_count <> 0 or locked_until is not null;"
+```
+
+user-service reads both on every login (no cache), so the reset takes effect immediately. The user name is
+user-service's `DB_USERNAME` (local default `userservice`). Inside the container `psql` connects over the local
+socket, so no password is needed. Otherwise wait 15 minutes.
+
 ## Markers
 
 | Marker | Meaning |
 |---|---|
 | `stage0` … `stage5` | The stage a test belongs to (0 smoke, 1 user, 2 store, 3 product, 4 order, 5 gateway) |
-| `stage1_destructive` | Bans and lockouts on dedicated throwaway accounts. Never touches the shared fixtures |
+| `stage1_destructive` | Merchant ban on dedicated throwaway merchants. Never touches the shared fixtures |
+| `lockout` | Failed-login tests. Excluded by default, opt in with `-m lockout` (at most 2 runs per 15 min) |
 | `gateway` | Goes through the api-gateway. Stays under the auth-tier budget |
 | `slow` | Waits for Kafka events or runs long multi-step flows |
 | `skip_time_based(reason=...)` | Needs a timer that cannot be waited out (24 h, 72 h, 7 d, 14 d). Always skipped, with the reason shown |
