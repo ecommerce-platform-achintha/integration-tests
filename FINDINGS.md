@@ -51,7 +51,7 @@ No failures. Notes:
 
 ### S1-3: platform settings for user-service values have no effect (service bug / design gap)
 
-- **Test:** `tests/test_stage1_registration.py::test_application_limit_follows_platform_setting` (`slow`)
+- **Test:** `tests/test_stage1_destructive.py::test_application_limit_follows_platform_setting` (`stage1_destructive`, `slow`)
 - **Request:** super admin `PUT http://localhost:8084/api/super-admin/settings/merchant.max-application-attempts`
   `{"value":"2","reason":"integration-tests"}` (200), then a new merchant
   `GET http://localhost:8081/api/merchant/application`. The value is restored to the original in a finalizer
@@ -68,10 +68,8 @@ No failures. Notes:
 
 ### Observations (no test failure)
 
-- **N1-1:** refresh-token reuse (`RefreshTokenService.rotate`) and logout (`revokeFamilyOf`) revoke only the
-  refresh-token family. Access tokens already issued stay valid for up to 10 minutes, because `tv` is not
-  incremented. The tests assert this current behaviour. Say if reuse is supposed to sign the user out at once
-  (`revokeAccessTokens`).
+- **N1-1 (accepted, not a finding):** refresh-token reuse and logout revoke only the refresh-token family. Access
+  tokens already issued live up to 10 minutes. Confirmed as matching the design. Hardening idea in the README.
 - **N1-2:** merchant approval does not revoke the merchant's tokens. The old token stays valid with the frozen
   `status: PENDING_APPROVAL` claim until the merchant logs in again, as the task describes. `/api/users/me` already
   shows `ACTIVE`.

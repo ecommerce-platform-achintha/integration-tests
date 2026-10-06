@@ -110,12 +110,19 @@ user-service reads both on every login (no cache), so the reset takes effect imm
 user-service's `DB_USERNAME` (local default `userservice`). Inside the container `psql` connects over the local
 socket, so no password is needed. Otherwise wait 15 minutes.
 
+## Not covered / notes
+
+- The super admin's forced password change happens only on the suite's very first run against a fresh database, so it
+  cannot be tested repeatedly. The same rule is covered through new admins and assistants.
+- Optional hardening idea (not a finding): refresh-token reuse revokes the token family, but access tokens already
+  issued stay valid for up to 10 minutes. Bumping the token version (`tv`) on reuse would sign the user out at once.
+
 ## Markers
 
 | Marker | Meaning |
 |---|---|
 | `stage0` … `stage5` | The stage a test belongs to (0 smoke, 1 user, 2 store, 3 product, 4 order, 5 gateway) |
-| `stage1_destructive` | Merchant ban on dedicated throwaway merchants. Never touches the shared fixtures |
+| `stage1_destructive` | Merchant ban on dedicated throwaway merchants, and a test that changes a global platform setting for about 15 s (restored in a finalizer). Never touches the shared fixtures |
 | `lockout` | Failed-login tests. Excluded by default, opt in with `-m lockout` (at most 2 runs per 15 min) |
 | `gateway` | Goes through the api-gateway. Stays under the auth-tier budget |
 | `slow` | Waits for Kafka events or runs long multi-step flows |

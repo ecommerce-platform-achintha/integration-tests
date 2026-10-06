@@ -1,6 +1,6 @@
 """
-Stage 1 (destructive): merchant ban on dedicated throwaway merchants. Never touches the shared fixtures.
-Run with `pytest -m stage1_destructive`.
+Stage 1 (destructive): merchant ban on dedicated throwaway merchants, and a test that briefly changes a global
+platform setting. Never touches the shared fixtures. Run with `pytest -m stage1_destructive`.
 """
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from tests import factories
+from tests.waits import wait_until
 
 pytestmark = pytest.mark.stage1_destructive
 
@@ -65,3 +66,27 @@ def test_only_active_merchants_can_be_banned(admin, client):
                                     "assistant login is refused with MERCHANT_BANNED")
 def test_merchant_ban_enforced_after_grace():
     pass
+
+
+@pytest.mark.slow
+def test_application_limit_follows_platform_setting(super_admin, client, request):
+    """
+    store-service owns the platform setting merchant.max-application-attempts (SettingKey, design section 7). The
+    limit a merchant sees should follow it.
+    """
+    key = "merchant.max-application-attempts"
+    settings = super_admin.get("/api/super-admin/settings").expect(200).body
+    original = next(s for s in settings if s["key"] == key)["value"]
+    new_value = "2" if original != "2" else "4"
+
+    def restore():
+        super_admin.put(f"/api/super-admin/settings/{key}",
+                        {"value": original, "reason": "integration-tests restore"}).expect(200)
+
+    request.addfinalizer(restore)
+    super_admin.put(f"/api/super-admin/settings/{key}",
+                    {"value": new_value, "reason": "integration-tests"}).expect(200)
+
+    merchant = factories.register_merchant(client, "attempts-setting")
+    wait_until(lambda: merchant.get("/api/merchant/application").expect(200).body["maxAttempts"] == int(new_value),
+               timeout=15, message=f"maxAttempts == {new_value} after changing {key}")
