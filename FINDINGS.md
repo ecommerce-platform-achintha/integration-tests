@@ -79,3 +79,32 @@ No failures. Notes:
   Probably intended. Noted because the normalisation code can never take effect on registration.
 - **N1-4:** the login IP key depends on how `localhost` resolves (`ip:127.0.0.1` vs `ip:0:0:0:0:0:0:0:1` rows
   in `login_throttle`). Both appear in this environment.
+
+## Stage 2 (store-service)
+
+### S2-1: badly typed query parameters answer 500, also on public routes (service bug, same cause as S1-2)
+
+- **Test:** `tests/test_stage2_store.py::test_badly_typed_query_parameter_is_400[public-size|public-page|admin-boolean|holiday-date]`
+- **Requests:** `GET http://localhost:8084/api/public/stores?size=x` (no token),
+  `GET /api/public/stores?page=abc` (no token), `GET /api/admin/banks?active=maybe` (admin),
+  `GET /api/super-admin/holidays?from=not-a-date` (super admin)
+- **Actual:** `500 {"code":"INTERNAL_ERROR","message":"Unexpected error",...}` for all four, with an ERROR log and
+  stack trace each time. Anyone can trigger the public ones without a token, so they can fill the error logs and
+  alerting.
+- **Expected:** `400 BAD_REQUEST` (or `VALIDATION_FAILED`).
+- **Where:** `store-service/.../exception/GlobalExceptionHandler.handleOther`, the same structure as user-service:
+  no handler for `MethodArgumentTypeMismatchException` (or `TypeMismatchException`), which is not an
+  `ErrorResponse`, so it gets the 500 branch.
+- **Verdict:** service bug. Left failing.
+
+### Observations (no test failure)
+
+- **N2-1:** `MockImageStorageAdapter.exists` always returns `true`, so `StoreService.upsertProfile`'s
+  "logoKey does not refer to an uploaded image" (400) can never happen with the mock adapter. Only the
+  `STORAGE_KEY_REGEX` pattern check is testable.
+- **N2-2 (question):** during a merchant's silent `BAN_GRACE`, `Store.recomputeVisibility` keeps `published = true`
+  ("so the merchant notices nothing"), but `StoreRepository.findVisible*` also require `acceptingOrders = true`, so
+  the store disappears from `GET /api/public/stores` and its public detail answers 404 at once
+  (`test_banned_owner_store_stops_accepting_orders`). A merchant who checks their public page would notice.
+  The test asserts the current behaviour. Say if the store should stay listed (but not orderable) during grace.
+- **N2-3:** the store-service README endpoint list (37 routes) matches the controllers. No mismatch found.

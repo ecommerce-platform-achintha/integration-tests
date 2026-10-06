@@ -150,7 +150,7 @@ FINDINGS.md       failing or suspicious cases, with the suspected code location
 
 Every run uses a new run id (`tests/data.py`), so emails, NICs, phones, store names, SKUs and slugs never collide
 with earlier runs or manual data, and no test assumes an empty database. The shared master data (bank `IT_BANK`,
-courier `IT_COURIER`, category `it-general`) is created idempotently: a 409 "already exists" is accepted, and the
+couriers `IT_COURIER` (COD) and `IT_COURIER_NC` (no COD), category `it-general`) is created idempotently: a 409 "already exists" is accepted, and the
 record is put back to the expected active state if a previous run changed it.
 
 ### Fixtures
@@ -164,3 +164,9 @@ record is put back to the expected active state if a previous run changed it.
   `factories.py` (`put_store_profile`, `add_bank_account`, `set_store_couriers`, `add_flat_shipping_template`,
   `set_cod`), so stage 2 can test each one.
 - `assistant`: an assistant of `merchant` with every permission. Its temporary password is already changed.
+- `bank`, `courier`, `courier_no_cod`, `category`: the shared master data above.
+- `factories.new_approved_merchant(client, admin, store="complete"|"incomplete"|None)`: a throwaway merchant, for
+  tests that change store state, so the shared `merchant`/`merchant2` stay as described.
+
+Tests that change global state restore it in a finalizer: platform settings go back to their previous value, and
+holidays created on random far-future dates are deleted.

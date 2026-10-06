@@ -19,6 +19,14 @@ COURIER = {
     "trackingNumberRegex": r"^ITX\d{8}$",
     "codSupported": True,
 }
+# A second shared courier without COD (quote rules: COD needs a COD-capable courier)
+COURIER_NO_COD = {
+    "code": "IT_COURIER_NC",
+    "name": "Integration Test Standard",
+    "trackingUrlTemplate": "https://track.example.com/standard?id={trackingNumber}",
+    "trackingNumberRegex": r"^NC\d{6}$",
+    "codSupported": False,
+}
 CATEGORY = {"slug": "it-general", "name": "Integration Test General", "description": "Owned by integration-tests"}
 
 ALL_ASSISTANT_PERMISSIONS = [
@@ -238,6 +246,16 @@ def set_cod(merchant: Actor, enabled: bool) -> dict:
     store = merchant.put("/api/merchant/store/cod", {"enabled": enabled}).expect(200).body
     merchant.extra["store"] = store
     return store
+
+
+def new_approved_merchant(client: ApiClient, admin: Actor, label: str = "merchant",
+                          store: str | None = "complete") -> Actor:
+    """Throwaway approved merchant; store: "complete", "incomplete" or None (no store profile yet)."""
+    merchant = register_merchant(client, label)
+    approve_merchant(admin, merchant)
+    if store is not None:
+        put_store_profile(merchant, complete=(store == "complete"))
+    return merchant
 
 
 def setup_merchant_store(merchant: Actor, courier_code: str = COURIER["code"],

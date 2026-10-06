@@ -43,8 +43,8 @@ def phone() -> str:
 
 
 def store_name() -> str:
-    # 3-100 chars, unique case-insensitively
-    return f"IT Store {RUN_ID} {_n()}"
+    # 3-100 chars, unique case-insensitively. Zero-padded so one name is never a substring of another (q search)
+    return f"IT Store {RUN_ID} {_n():05d}"
 
 
 def sku() -> str:

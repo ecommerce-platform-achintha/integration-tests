@@ -90,6 +90,11 @@ def courier(super_admin) -> dict:
 
 
 @pytest.fixture(scope="session")
+def courier_no_cod(super_admin) -> dict:
+    return factories.ensure_courier(super_admin, factories.COURIER_NO_COD)
+
+
+@pytest.fixture(scope="session")
 def category(admin) -> dict:
     return factories.ensure_category(admin)
 
