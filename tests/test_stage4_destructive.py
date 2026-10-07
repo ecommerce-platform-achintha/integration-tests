@@ -131,3 +131,37 @@ def test_banned_merchant_store_stops_taking_orders(client, admin, category, cour
     shop.login()
     assert shop.status == "ACTIVE"
     assert factories.quote(shop, open_order)["status"] == "AWAITING_CUSTOMER_CONFIRMATION"
+
+
+@pytest.mark.slow
+def test_upheld_objection_lifts_the_suspension_it_caused(client, admin, super_admin, merchant, item):
+    limit = int(next(s["value"] for s in super_admin.get("/api/super-admin/settings").expect(200).body
+                     if s["key"] == "score.customer.cod-refusal-limit"))
+    victim = factories.new_buyer(client, "cod-objector")
+    last = None
+    for _ in range(limit):
+        last = factories.order_to_shipped(victim, merchant, item)
+        merchant.post(f"{MERCHANT_ORDERS}/{last['publicId']}/delivery-failed", {"type": "COD_REFUSED"}).expect(200)
+    score_url = f"/api/admin/customers/{victim.public_id}/score"
+    assert admin.get(score_url).expect(200).body["codSuspended"] is True
+
+    victim.post(f"{CUSTOMER_ORDERS}/{last['publicId']}/cod-objection", {"text": "I was never called"}).expect(200)
+    admin.post(f"/api/admin/orders/{last['publicId']}/cod-objection/decision",
+               {"decision": "UPHELD", "note": "courier log shows no attempt"}).expect(200)
+    score = admin.get(score_url).expect(200).body
+    assert score["codSuspended"] is False and score["codRefusals"] == limit - 1
+    assert score["codRefusalsTowardSuspension"] == limit - 1  # the count the suspension reset is restored
+    lid = line_id(victim, item)
+    checkout(victim, checkout_body(victim, [lid], {store_id(merchant): "COD"})).expect(201)
+
+
+def test_banned_customer_cannot_pay(client, admin, merchant, item):
+    victim = factories.new_buyer(client, "ban-payer")
+    order = factories.bank_order_awaiting_payment(victim, merchant, item)
+    admin.post(f"/api/admin/customers/{victim.public_id}/ban", {"reason": "integration-tests"}).expect(200)
+    victim.login()
+    body = factories.payment_body(merchant.extra["bank_accounts"][0]["publicId"])
+    wait_until(lambda: factories.submit_payment(victim, order, body).status == 403, message="ban reaches order-service")
+    factories.submit_payment(victim, order, body).expect(403, code="CUSTOMER_BANNED")
+    # AWAITING_PAYMENT is confirmed, so the ban does not cancel it
+    assert merchant.get(f"{MERCHANT_ORDERS}/{order['publicId']}").expect(200).body["status"] == "AWAITING_PAYMENT"

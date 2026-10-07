@@ -441,3 +441,21 @@ def new_shop(client: ApiClient, admin: Actor, label: str = "shop", cod: bool = T
     wait_publicly_visible(client, product)
     merchant.extra["product"] = product
     return merchant
+
+
+def bank_order_awaiting_payment(customer: Actor, merchant: Actor, product: dict, quantity: int = 1) -> dict:
+    """A BANK_TRANSFER order placed, quoted and confirmed: AWAITING_PAYMENT."""
+    order = place_order(customer, merchant, product, quantity, method="BANK_TRANSFER")
+    quote(merchant, order)
+    return confirm(customer, order)
+
+
+def payment_body(account_public_id: str, reference: str | None = None, **overrides: Any) -> dict:
+    body = {"referenceNumber": reference or f"ITREF{data.unique()}", "sourceBankCode": BANK["code"],
+            "sourceAccountNumber": data.account_number(), "storeBankAccountPublicId": account_public_id}
+    body.update(overrides)
+    return body
+
+
+def submit_payment(customer: Actor, order: dict, body: dict, key: str | bool = True):
+    return customer.post(f"/api/customer/orders/{order['publicId']}/payments", body, idempotency_key=key)

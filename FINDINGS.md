@@ -231,3 +231,10 @@ call is the JWKS fetch in `auth/JwtConfig` (`WebClient`, no parameters).
   explicit ISO `@DateTimeFormat` on any future date/time parameter, or a `FeignFormatterRegistrar` with ISO enabled
   in each service's `FeignConfig`. Also, the receiving controllers in store-service and user-service have no
   `TypeMismatchException` handler (S1-2 / S2-1), so a badly formatted parameter shows up as a 500 there, not a 400.
+
+### Stage 4b
+
+No failures. Bank transfer, duplicate references, complaints, admin resolution, COD objections and reviews in
+store-service and product-service behave as the code describes. Three test mistakes were fixed: instants in a
+create response have nanoseconds, but read back from Postgres they are rounded to microseconds, so the tests compare
+them with a 1 µs tolerance (or leave `createdAt` out).

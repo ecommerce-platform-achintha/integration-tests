@@ -43,3 +43,31 @@ def test_auto_complete():
 @pytest.mark.skip_time_based(reason="app.orders.idempotency-ttl (24 h)")
 def test_idempotency_key_expires():
     """The same Idempotency-Key after 24 h runs the request again instead of replaying it."""
+
+
+@pytest.mark.skip_time_based(reason="timers.payment-submission-hours (24 h)")
+def test_payment_submission_timeout():
+    """AWAITING_PAYMENT past the payment deadline -> EXPIRED_PAYMENT, stock released, customer score -1
+    (PAYMENT_EXPIRED). A rejected payment does not extend the deadline."""
+
+
+@pytest.mark.skip_time_based(reason="timers.payment-verification-hours (24 h)")
+def test_late_payment_verification_flag():
+    """PAYMENT_SUBMITTED past verification -> stays open, flags.lateVerification=true, hold extended, merchant
+    LATE_VERIFICATION penalty in store-service."""
+
+
+@pytest.mark.skip_time_based(reason="complaints.window-days (30 days)")
+def test_complaint_window_closes():
+    """A complaint more than 30 days after completion -> 409 COMPLAINT_NOT_ALLOWED."""
+
+
+@pytest.mark.skip_time_based(reason="cod.objection-window-days (7 days)")
+def test_cod_objection_window_closes():
+    """An objection more than 7 days after the failed delivery -> 409 OBJECTION_NOT_ALLOWED."""
+
+
+@pytest.mark.skip_time_based(reason="timers.ban-grace-days (14 days)")
+def test_banned_merchant_open_orders_need_admin_resolution():
+    """At the end of BAN_GRACE (merchant BANNED) open orders get flags.needsAdminResolution and appear in
+    GET /api/admin/orders?needsResolution=true; the merchant can no longer act (403)."""
