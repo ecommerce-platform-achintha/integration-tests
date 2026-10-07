@@ -56,9 +56,21 @@ def slug(prefix: str = "it") -> str:
     return f"{prefix}-{RUN_ID}-{_n()}".lower()
 
 
-def code(prefix: str = "IT") -> str:
+def _code(prefix: str) -> str:
     # store-service Validation.CODE_REGEX ^[A-Z][A-Z0-9_]{1,19}$
-    return f"{prefix}_{RUN_ID}{_n()}".upper()[:20]
+    value = f"{prefix}_{RUN_ID}{_n()}".upper()
+    assert len(value) <= 20, value
+    return value
+
+
+def bank_code() -> str:
+    """Throwaway bank code, always ITB_... so test data is recognisable."""
+    return _code("ITB")
+
+
+def courier_code() -> str:
+    """Throwaway courier code, always ITC_... so test data is recognisable."""
+    return _code("ITC")
 
 
 def account_number() -> str:

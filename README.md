@@ -168,5 +168,9 @@ record is put back to the expected active state if a previous run changed it.
 - `factories.new_approved_merchant(client, admin, store="complete"|"incomplete"|None)`: a throwaway merchant, for
   tests that change store state, so the shared `merchant`/`merchant2` stay as described.
 
+Test data is never deleted: users, stores, throwaway banks (`ITB_...`) and couriers (`ITC_...`) stay in the databases.
+For a clean slate, reset **all** databases together (user, store, product, order) and restart the services. Resetting
+only some of them leaves references across services that point at nothing.
+
 Tests that change global state restore it in a finalizer: platform settings go back to their previous value, and
 holidays created on random far-future dates are deleted.

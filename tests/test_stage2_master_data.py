@@ -10,7 +10,7 @@ pytestmark = pytest.mark.stage2
 
 
 def courier_payload(**overrides) -> dict:
-    body = {"code": data.code("ITC"), "name": "Throwaway Courier",
+    body = {"code": data.courier_code(), "name": "Throwaway Courier",
             "trackingUrlTemplate": "https://parcel.example.com/t/{trackingNumber}",
             "trackingNumberRegex": r"^TC\d{5}$", "codSupported": False, "active": True}
     body.update(overrides)
@@ -20,7 +20,7 @@ def courier_payload(**overrides) -> dict:
 # --- banks ------------------------------------------------------------------------------------------------------
 
 def test_bank_crud(super_admin, admin):
-    code = data.code("ITB")
+    code = data.bank_code()
     created = super_admin.post("/api/admin/banks", {"code": code, "name": "Throwaway Bank"}).expect(201).body
     assert created == {**created, "code": code, "name": "Throwaway Bank", "active": True}
     super_admin.post("/api/admin/banks", {"code": code, "name": "Again"}).expect(409, code="BANK_CODE_TAKEN")
@@ -43,7 +43,7 @@ def test_bank_code_rules(super_admin, code):
 
 
 def test_bank_name_required(super_admin):
-    super_admin.post("/api/admin/banks", {"code": data.code("ITB"), "name": "  "}).expect(400)
+    super_admin.post("/api/admin/banks", {"code": data.bank_code(), "name": "  "}).expect(400)
     super_admin.put(f"/api/admin/banks/{factories.BANK['code']}", {"name": "x"}).expect(400)  # active missing
 
 
@@ -52,7 +52,7 @@ def test_bank_list_is_paged(admin, bank):
 
 
 def test_bank_access_control(admin, customer, merchant, assistant, bank):
-    admin.post("/api/admin/banks", {"code": data.code("ITB"), "name": "x"}).expect(403, code="ACCESS_DENIED")
+    admin.post("/api/admin/banks", {"code": data.bank_code(), "name": "x"}).expect(403, code="ACCESS_DENIED")
     admin.put(f"/api/admin/banks/{bank['code']}", {"name": "x", "active": True}).expect(403, code="ACCESS_DENIED")
     admin.delete(f"/api/admin/banks/{bank['code']}").expect(403, code="ACCESS_DENIED")
     for actor in (customer, merchant, assistant):
@@ -61,7 +61,7 @@ def test_bank_access_control(admin, customer, merchant, assistant, bank):
 
 
 def test_bank_in_use_cannot_be_deleted(super_admin, admin, client):
-    code = data.code("ITB")
+    code = data.bank_code()
     super_admin.post("/api/admin/banks", {"code": code, "name": "In Use Bank"}).expect(201)
     owner = factories.new_approved_merchant(client, admin, "bank-in-use")
     factories.add_bank_account(owner, code)

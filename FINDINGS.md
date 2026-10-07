@@ -97,14 +97,20 @@ No failures. Notes:
   `ErrorResponse`, so it gets the 500 branch.
 - **Verdict:** service bug. Left failing.
 
+### S1-2 / S2-1: shared root cause and fix
+
+S1-2 and S2-1 stay two findings (one per service), but the fix is the same: one `@ExceptionHandler` for
+`org.springframework.beans.TypeMismatchException` (the superclass of `MethodArgumentTypeMismatchException` and
+`MethodArgumentConversionNotSupportedException`) in each service's `GlobalExceptionHandler`, answering 400
+`BAD_REQUEST` with the parameter name. The pre-upgrade product-service had such a handler. Whether the upgraded one
+still has it is checked in stage 3 (see S3 below).
+
 ### Observations (no test failure)
 
 - **N2-1:** `MockImageStorageAdapter.exists` always returns `true`, so `StoreService.upsertProfile`'s
   "logoKey does not refer to an uploaded image" (400) can never happen with the mock adapter. Only the
   `STORAGE_KEY_REGEX` pattern check is testable.
-- **N2-2 (question):** during a merchant's silent `BAN_GRACE`, `Store.recomputeVisibility` keeps `published = true`
-  ("so the merchant notices nothing"), but `StoreRepository.findVisible*` also require `acceptingOrders = true`, so
-  the store disappears from `GET /api/public/stores` and its public detail answers 404 at once
-  (`test_banned_owner_store_stops_accepting_orders`). A merchant who checks their public page would notice.
-  The test asserts the current behaviour. Say if the store should stay listed (but not orderable) during grace.
+- **N2-2 (intended, not a finding):** during `BAN_GRACE` the store leaves public search and its public detail
+  answers 404 while the merchant's own view stays silent. This matches contract section 3.2.
+  `test_banned_owner_store_stops_accepting_orders` asserts it.
 - **N2-3:** the store-service README endpoint list (37 routes) matches the controllers. No mismatch found.

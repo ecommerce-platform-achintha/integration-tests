@@ -99,7 +99,10 @@ def test_pending_owner_store_appears_after_approval(admin, client):
 
 @pytest.mark.slow
 def test_banned_owner_store_stops_accepting_orders(admin, client):
-    """BAN_GRACE keeps the store published but not accepting orders, which hides it publicly; unban restores it."""
+    """
+    Contract section 3.2: during BAN_GRACE the store stops accepting orders and its listings leave search; only the
+    merchant's own view stays silent. Unban restores it.
+    """
     merchant = factories.new_approved_merchant(client, admin, "store-ban")
     store = merchant.extra["store"]
     wait_until(lambda: is_public(client, store), message="store visible")
