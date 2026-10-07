@@ -238,3 +238,22 @@ No failures. Bank transfer, duplicate references, complaints, admin resolution, 
 store-service and product-service behave as the code describes. Three test mistakes were fixed: instants in a
 create response have nanoseconds, but read back from Postgres they are rounded to microseconds, so the tests compare
 them with a 1 µs tolerance (or leave `createdAt` out).
+
+## Stage 5 (api-gateway)
+
+No failures: routing, token check and role rules, `/internal/**` and path guards (including the local discovery
+routes), body limits, security headers, CORS, header spoofing, the end-to-end COD order through the gateway, and the
+auth-tier rate limit with `Retry-After` all behave as the code describes.
+
+### Observations (no test failure)
+
+- **N5-1 (not a bug): a CORS preflight that asks for an allowed and an unlisted header gets 200.** Request:
+  `OPTIONS /api/customer/checkout` with `Origin: http://localhost:5173`, `Access-Control-Request-Method: POST`,
+  `Access-Control-Request-Headers: authorization,x-user-roles`. Response: `200` with
+  `Access-Control-Allow-Headers: authorization` only. This is Spring's `CorsConfiguration.checkHeaders`
+  (`api-gateway/.../web/WebConfig.corsWebFilter`): it answers with the allowed subset and rejects (403) only when
+  none of the requested headers is allowed. The browser still refuses the real request, because `x-user-roles` is
+  not listed. `test_cors_preflight_refuses_unlisted_header` asserts both cases.
+- **N5-2:** the circuit-breaker fallbacks (`503 SERVICE_UNAVAILABLE` from `/fallback/{service}`) are not tested,
+  because that needs a service to be stopped and tests never start or stop services. Only the fact that clients
+  can't call `/fallback/**` directly (404) is tested.

@@ -15,6 +15,8 @@ def pytest_collection_modifyitems(config, items):
         if marker is not None:
             reason = marker.kwargs.get("reason") or (marker.args[0] if marker.args else "time-based")
             item.add_marker(pytest.mark.skip(reason=f"time-based: {reason}"))
+    # Tests that exhaust a gateway rate-limit bucket run after everything else, whatever was selected
+    items.sort(key=lambda item: item.get_closest_marker("exhausts_rate_limit") is not None)
 
 
 def pytest_report_header(config):
@@ -152,3 +154,11 @@ def item2(client, merchant2, category) -> dict:
                                               factories.simple_product_payload(category["slug"], price="500.00"))
     factories.wait_publicly_visible(client, product)
     return product
+
+
+# --- stage 5: the gateway ---------------------------------------------------------------------------------------
+
+@pytest.fixture(scope="session")
+def gateway(client) -> ApiClient:
+    """Anonymous client that always goes through the gateway (actors: tests.actors.via_gateway)."""
+    return client.in_mode("gateway")

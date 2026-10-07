@@ -116,3 +116,44 @@ class Actor:
     def __repr__(self) -> str:
         pid = self.claims.get("pid", "?")
         return f"<Actor {self.label or self.email} {self.claims.get('role', '?')} {pid}>"
+
+
+class Via:
+    """
+    An actor whose requests go through another base mode (e.g. the gateway) while logins and token refresh stay on
+    the actor's own client (direct to user-service), so they never spend the gateway's auth bucket. Everything else
+    (claims, extra, login) is the wrapped actor's, so factories accept it in place of an Actor.
+    """
+
+    def __init__(self, actor: Actor, mode: str = "gateway"):
+        self._actor = actor
+        self._mode = mode
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._actor, name)
+
+    @property
+    def api(self) -> ApiClient:
+        return self._actor.api.in_mode(self._mode)
+
+    def get(self, path: str, **kw: Any) -> ApiResponse:
+        return self.api.get(path, **kw)
+
+    def post(self, path: str, json: Any = None, **kw: Any) -> ApiResponse:
+        return self.api.post(path, json, **kw)
+
+    def put(self, path: str, json: Any = None, **kw: Any) -> ApiResponse:
+        return self.api.put(path, json, **kw)
+
+    def patch(self, path: str, json: Any = None, **kw: Any) -> ApiResponse:
+        return self.api.patch(path, json, **kw)
+
+    def delete(self, path: str, **kw: Any) -> ApiResponse:
+        return self.api.delete(path, **kw)
+
+    def __repr__(self) -> str:
+        return f"<Via {self._mode} {self._actor!r}>"
+
+
+def via_gateway(actor: Actor) -> Via:
+    return Via(actor, "gateway")

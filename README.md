@@ -44,6 +44,7 @@ re-running, or the account locks.
 .venv/bin/pytest -m stage3 -v        # product-service
 .venv/bin/pytest -m stage4 -v        # order-service end to end
 .venv/bin/pytest -m stage4_destructive -v   # bans, store blocks, COD suspension on throwaway actors
+.venv/bin/pytest -m stage5 -v        # api-gateway (about 75 s: the rate-limit test waits for its bucket to refill)
 .venv/bin/pytest -m "not slow" -v    # skip event-driven / long scenarios
 ```
 
@@ -120,6 +121,13 @@ socket, so no password is needed. Otherwise wait 15 minutes.
   idempotency-key expiry, payment submission timeout, the late-verification flag, the complaint window (30 days),
   the COD objection window (7 days) and open orders needing admin resolution at the end of a merchant's ban grace
   (14 days). They need a test clock or settings in seconds.
+- Stage 5 (gateway): all tokens come from logging in directly against user-service, and tests call the gateway
+  through `tests.actors.via_gateway(actor)`, so only the tests that need it touch the gateway's auth bucket (10 per
+  minute per IP: the end-to-end scenario's two registrations). `test_stage5_zz_rate_limit.py` is the only test
+  that empties it (with empty-body logins that user-service rejects in validation, so its failed-login throttle
+  never counts them). It runs last and then waits `Retry-After` x capacity (about 60 s) until the bucket is full
+  again. Circuit-breaker fallbacks are not tested (that needs a stopped service). For the local discovery routes,
+  only "`/internal/**` stays unreachable" is asserted.
 - Duplicate payment references are unique per (normalised reference, destination bank) across all stores. Each test
   uses a fresh `ITREF...` / `ITDUP...` reference, so earlier runs never collide.
 - Optional hardening idea (not a finding): refresh-token reuse revokes the token family, but access tokens already
@@ -135,6 +143,7 @@ socket, so no password is needed. Otherwise wait 15 minutes.
 | `gateway` | Goes through the api-gateway. Stays under the auth-tier budget |
 | `slow` | Waits for Kafka events or runs long multi-step flows |
 | `stage4_destructive` | Customer ban (including payment), store block, COD suspension (and lifting it by an upheld objection) and merchant ban, each on throwaway customers/merchants created inside the test. Never touches the shared fixtures |
+| `exhausts_rate_limit` | Empties a gateway rate-limit bucket on purpose. A conftest hook moves these tests to the end of any run, and the test waits until the bucket has refilled |
 | `skip_time_based(reason=...)` | Needs a timer that cannot be waited out (24 h, 72 h, 7 d, 14 d). Always skipped, with the reason shown |
 
 ## Layout
