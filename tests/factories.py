@@ -267,3 +267,53 @@ def setup_merchant_store(merchant: Actor, courier_code: str = COURIER["code"],
     add_flat_shipping_template(merchant, courier_code)
     set_cod(merchant, cod)
     return merchant
+
+
+# --- products (product-service) ---------------------------------------------------------------------------------
+
+def simple_product_payload(category_slug: str = CATEGORY["slug"], price: str = "1000.00", stock: int = 50,
+                           **overrides: Any) -> dict:
+    """ProductRequest, simple form: sku + listPrice (+ initialStock) create one default variant."""
+    body = {"name": f"IT Product {data.unique()}", "description": "Product created by integration-tests",
+            "categorySlug": category_slug, "codAllowed": True, "sku": data.sku(), "listPrice": price,
+            "initialStock": stock}
+    body.update(overrides)
+    return body
+
+
+def variant_product_payload(category_slug: str = CATEGORY["slug"], **overrides: Any) -> dict:
+    """ProductRequest, variant form: options + one variant per combination (Size S/M x Colour Red)."""
+    body = {
+        "name": f"IT Shirt {data.unique()}", "description": "Variant product by integration-tests",
+        "categorySlug": category_slug, "codAllowed": True,
+        "options": [{"name": "Size", "values": ["S", "M"]}, {"name": "Colour", "values": ["Red"]}],
+        "variants": [
+            {"sku": data.sku(), "attributes": {"Size": "S", "Colour": "Red"}, "listPrice": "1500.00",
+             "initialStock": 10},
+            {"sku": data.sku(), "attributes": {"Size": "M", "Colour": "Red"}, "listPrice": "1600.00",
+             "initialStock": 5},
+        ],
+    }
+    body.update(overrides)
+    return body
+
+
+def create_product(actor: Actor, body: dict | None = None) -> dict:
+    return actor.post("/api/merchant/products", body or simple_product_payload()).expect(201).body
+
+
+def set_product_status(actor: Actor, product_public_id: str, status: str) -> dict:
+    return actor.post(f"/api/merchant/products/{product_public_id}/status", {"status": status}).expect(200).body
+
+
+def create_active_product(actor: Actor, body: dict | None = None) -> dict:
+    product = create_product(actor, body)
+    return set_product_status(actor, product["publicId"], "ACTIVE")
+
+
+def adjust_stock(actor: Actor, variant_public_id: str, mode: str, quantity: int, reason: str = "integration-tests",
+                 expected_version: int | None = None) -> dict:
+    body = {"mode": mode, "quantity": quantity, "reason": reason}
+    if expected_version is not None:
+        body["expectedVersion"] = expected_version
+    return actor.patch(f"/api/merchant/variants/{variant_public_id}/stock", body).expect(200).body

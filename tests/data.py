@@ -17,7 +17,8 @@ def _n() -> int:
 
 
 def unique(prefix: str = "") -> str:
-    return f"{prefix}{RUN_ID}{_n()}"
+    # Zero-padded so one value is never a substring of another (name searches use "contains")
+    return f"{prefix}{RUN_ID}{_n():05d}"
 
 
 def email(kind: str = "user") -> str:

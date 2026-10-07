@@ -137,11 +137,12 @@ tests/
   api.py          ApiClient / ApiResponse: routing, bearer token, Idempotency-Key, expect(status, code=...)
   actors.py       Actor: email/password/tokens, claims from the JWT, login/refresh, re-login near expiry
   data.py         unique emails, NICs, phones, store names, SKUs, slugs, codes per run
-  factories.py    register/approve/create actors, master data (idempotent), merchant store set-up steps
+  factories.py    register/approve/create actors, master data (idempotent), merchant store set-up steps,
+                  product payloads/create/activate, stock adjust
   waits.py        wait_until(predicate, timeout=30, interval=1) for Kafka-driven state
   pagination.py   PageResponse shape and page/size/cap checks
   conftest.py     session fixtures: super_admin, admin, customer, customer2, merchant, merchant2, assistant,
-                  bank, courier, category
+                  bank, courier, courier_no_cod, category, product
   test_stage*_*.py
 FINDINGS.md       failing or suspicious cases, with the suspected code location
 ```
@@ -165,6 +166,8 @@ record is put back to the expected active state if a previous run changed it.
   `set_cod`), so stage 2 can test each one.
 - `assistant`: an assistant of `merchant` with every permission. Its temporary password is already changed.
 - `bank`, `courier`, `courier_no_cod`, `category`: the shared master data above.
+- `product`: an ACTIVE simple product of `merchant` in `it-general` (1000.00, stock 50, COD allowed), shared per
+  session. Tests that change price, stock or status create their own product (`factories.create_active_product`).
 - `factories.new_approved_merchant(client, admin, store="complete"|"incomplete"|None)`: a throwaway merchant, for
   tests that change store state, so the shared `merchant`/`merchant2` stay as described.
 

@@ -120,3 +120,9 @@ def merchant2(client, admin, courier, bank) -> Actor:
 def assistant(merchant, client) -> Actor:
     """Assistant of `merchant` with every permission, password already changed."""
     return factories.create_assistant(merchant, client)
+
+
+@pytest.fixture(scope="session")
+def product(merchant, category) -> dict:
+    """An ACTIVE simple product of `merchant` (list price 1000.00, stock 50, COD allowed)."""
+    return factories.create_active_product(merchant, factories.simple_product_payload(category["slug"]))

@@ -102,8 +102,11 @@ No failures. Notes:
 S1-2 and S2-1 stay two findings (one per service), but the fix is the same: one `@ExceptionHandler` for
 `org.springframework.beans.TypeMismatchException` (the superclass of `MethodArgumentTypeMismatchException` and
 `MethodArgumentConversionNotSupportedException`) in each service's `GlobalExceptionHandler`, answering 400
-`BAD_REQUEST` with the parameter name. The pre-upgrade product-service had such a handler. Whether the upgraded one
-still has it is checked in stage 3 (see S3 below).
+`BAD_REQUEST` with the parameter name. The pre-upgrade product-service had such a handler: product-service git history
+shows `@ExceptionHandler(TypeMismatchException.class) handleTypeMismatch` in `GlobalExceptionHandler` at commits
+`f2b9cd8` and `3450599`, and it is **gone in `b4081e6`** ("initial changes are done", the upgrade). The upgraded
+product-service has no such handler either, so it is a regression there (stage 3 test
+`test_badly_typed_public_query_is_400`).
 
 ### Observations (no test failure)
 
@@ -114,3 +117,36 @@ still has it is checked in stage 3 (see S3 below).
   answers 404 while the merchant's own view stays silent. This matches contract section 3.2.
   `test_banned_owner_store_stops_accepting_orders` asserts it.
 - **N2-3:** the store-service README endpoint list (37 routes) matches the controllers. No mismatch found.
+
+## Stage 3 (product-service)
+
+### S3-1: badly typed query parameters answer 500 on the public product search (service bug, regression)
+
+- **Test:** `tests/test_stage3_public.py::test_badly_typed_public_query_is_400[minPrice|inStock|page]`
+- **Requests (no token):** `GET http://localhost:8082/api/public/products?minPrice=abc`, `?inStock=maybe`, `?page=x`
+- **Actual:** `500 {"code":"INTERNAL_ERROR","message":"Unexpected error",...}` for all three. Anonymous callers can
+  trigger it on the busiest public route.
+- **Expected:** `400 BAD_REQUEST` (or `VALIDATION_FAILED`).
+- **Where:** `product-service/.../exception/GlobalExceptionHandler` has no `TypeMismatchException` handler. It had
+  one before the upgrade (`f2b9cd8`, `3450599`) and lost it in `b4081e6`. The fix is the same as for S1-2 / S2-1 (see
+  above). order-service's `GlobalExceptionHandler` does handle it.
+- **Verdict:** service bug (regression). Left failing.
+
+### Observations (no test failure)
+
+- **N3-1 (low severity, cross-service): six GET list endpoints return a plain JSON array, not a `PageResponse`.**
+  The project rule is that every GET list endpoint supports pagination, with no exception for small lists.
+  - `GET /api/public/categories`: `product-service/.../category/CategoryController.publicList`
+  - `GET /api/admin/categories`: `CategoryController.adminList`
+  - `GET /api/super-admin/settings`: `store-service/.../settings/SettingsController.list`
+  - `GET /api/merchant/owner/couriers`: `store-service/.../courier/MerchantCourierController.list`
+  - `GET /api/merchant/owner/couriers/available`: `MerchantCourierController.available`
+  - `GET /api/merchant/owner/bank-accounts/banks`: `store-service/.../bank/BankAccountController.banks`
+
+  Expected: `page`/`size`/`sort` and the `{content, page, size, totalElements, totalPages}` body. Converting them
+  changes the response shape (an array becomes an object), so every client of these routes (frontend, the tests
+  above) has to change at the same time. The suite pins today's shape
+  (`test_stage3_categories.py::test_unpaged_list_endpoints_return_plain_arrays`) and will need updating with the fix.
+- **N3-2:** the product-service README was rewritten in `b4081e6`. Its endpoint table (26 routes) matches the
+  controllers, and the stage 3 behaviour tested here (status lifecycle, stock modes, discount rules, search filters,
+  visibility) matches its descriptions. No README/code mismatch found in stage 3 scope.
