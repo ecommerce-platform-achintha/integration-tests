@@ -43,6 +43,7 @@ re-running, or the account locks.
 .venv/bin/pytest -m stage2 -v        # store-service
 .venv/bin/pytest -m stage3 -v        # product-service
 .venv/bin/pytest -m stage4 -v        # order-service end to end
+.venv/bin/pytest -m stage4_destructive -v   # bans, store blocks, COD suspension on throwaway actors
 .venv/bin/pytest -m "not slow" -v    # skip event-driven / long scenarios
 ```
 
@@ -114,6 +115,9 @@ socket, so no password is needed. Otherwise wait 15 minutes.
 
 - The super admin's forced password change happens only on the suite's very first run against a fresh database, so it
   cannot be tested repeatedly. The same rule is covered through new admins and assistants.
+- Stage 4 time-based cases (`tests/test_stage4_timers.py`, always skipped): merchant response timeout, customer
+  confirmation timeout, `DEADLINE_PASSED` for a late user action, the late-shipment flag, auto-complete, and the
+  24 h idempotency-key expiry. They need a test clock or settings in seconds.
 - Optional hardening idea (not a finding): refresh-token reuse revokes the token family, but access tokens already
   issued stay valid for up to 10 minutes. Bumping the token version (`tv`) on reuse would sign the user out at once.
 
@@ -126,6 +130,7 @@ socket, so no password is needed. Otherwise wait 15 minutes.
 | `lockout` | Failed-login tests. Excluded by default, opt in with `-m lockout` (at most 2 runs per 15 min) |
 | `gateway` | Goes through the api-gateway. Stays under the auth-tier budget |
 | `slow` | Waits for Kafka events or runs long multi-step flows |
+| `stage4_destructive` | Customer ban, store block, COD suspension and merchant ban, each on throwaway customers/merchants created inside the test. Never touches the shared fixtures |
 | `skip_time_based(reason=...)` | Needs a timer that cannot be waited out (24 h, 72 h, 7 d, 14 d). Always skipped, with the reason shown |
 
 ## Layout
@@ -170,6 +175,11 @@ record is put back to the expected active state if a previous run changed it.
   session. Tests that change price, stock or status create their own product (`factories.create_active_product`).
 - `factories.new_approved_merchant(client, admin, store="complete"|"incomplete"|None)`: a throwaway merchant, for
   tests that change store state, so the shared `merchant`/`merchant2` stay as described.
+- Stage 4 (orders): `buyer` is a fresh customer with one address per test, so its cart, open-order limit (10) and
+  score start from zero. `item`/`item2` are fresh ACTIVE products (stock 50) of `merchant`/`merchant2` per test;
+  order tests never use the shared `product`, so its stock is not drained. `factories.new_shop(...)` makes a
+  throwaway merchant with a ready store and a visible product, for exact store metrics, COD off or a second courier.
+  Order steps are helpers too: `place_order`, `quote`, `confirm`, `ship`, `order_to_ready`, `order_to_shipped`.
 
 Test data is never deleted: users, stores, throwaway banks (`ITB_...`) and couriers (`ITC_...`) stay in the databases.
 For a clean slate, reset **all** databases together (user, store, product, order) and restart the services. Resetting

@@ -126,3 +126,29 @@ def assistant(merchant, client) -> Actor:
 def product(merchant, category) -> dict:
     """An ACTIVE simple product of `merchant` (list price 1000.00, stock 50, COD allowed)."""
     return factories.create_active_product(merchant, factories.simple_product_payload(category["slug"]))
+
+
+# --- stage 4: per-test actors and stock, so order tests never drain shared state --------------------------------
+
+@pytest.fixture
+def buyer(client) -> Actor:
+    """A fresh customer with one address (own cart, open-order budget and score)."""
+    return factories.new_buyer(client, "buyer")
+
+
+@pytest.fixture
+def item(client, merchant, category) -> dict:
+    """A fresh ACTIVE simple product of `merchant` (1000.00, stock 50, COD allowed). Orders never touch `product`.
+    Waits until it is public: a just-created store reaches product-service through Kafka."""
+    product = factories.create_active_product(merchant, factories.simple_product_payload(category["slug"]))
+    factories.wait_publicly_visible(client, product)
+    return product
+
+
+@pytest.fixture
+def item2(client, merchant2, category) -> dict:
+    """The same in `merchant2`'s store (500.00), for multi-store carts."""
+    product = factories.create_active_product(merchant2,
+                                              factories.simple_product_payload(category["slug"], price="500.00"))
+    factories.wait_publicly_visible(client, product)
+    return product

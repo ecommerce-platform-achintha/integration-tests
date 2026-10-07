@@ -317,3 +317,127 @@ def adjust_stock(actor: Actor, variant_public_id: str, mode: str, quantity: int,
     if expected_version is not None:
         body["expectedVersion"] = expected_version
     return actor.patch(f"/api/merchant/variants/{variant_public_id}/stock", body).expect(200).body
+
+
+def wait_publicly_visible(client: ApiClient, product: dict, timeout: float = 30) -> None:
+    """A new store's products become purchasable once product-service has the store's visibility (Kafka)."""
+    from tests.waits import wait_until
+    wait_until(lambda: client.get(f"/api/public/products/{product['publicId']}", token=None).status == 200,
+               timeout=timeout, message=f"product {product['publicId']} publicly visible")
+
+
+def stock_of(merchant: Actor, product: dict, variant_index: int = 0) -> tuple[int, int]:
+    """(quantityAvailable, reservedQuantity) of a variant, from the merchant's product detail."""
+    detail = merchant.get(f"/api/merchant/products/{product['publicId']}").expect(200).body
+    stock = detail["variants"][variant_index]["stock"]
+    return stock["quantityAvailable"], stock["reservedQuantity"]
+
+
+# --- orders (order-service) -------------------------------------------------------------------------------------
+
+def add_address(customer: Actor, **overrides: Any) -> dict:
+    body = {"recipientName": "IT Receiver", "phone": data.phone(), "line1": "12 Galle Road", "city": "Colombo",
+            "district": "Colombo", "postalCode": "00300"}
+    body.update(overrides)
+    address = customer.post("/api/users/me/addresses", body).expect(201).body
+    customer.extra["address"] = address
+    return address
+
+
+def new_buyer(client: ApiClient, label: str = "buyer") -> Actor:
+    """A fresh customer with one address: own cart, own open-order budget, own score."""
+    customer = register_customer(client, label)
+    add_address(customer)
+    return customer
+
+
+def store_id(merchant: Actor) -> str:
+    return merchant.extra["store"]["publicId"]
+
+
+def variant_id(product: dict, index: int = 0) -> str:
+    return product["variants"][index]["publicId"]
+
+
+def add_to_cart(customer: Actor, variant_public_id: str, quantity: int = 1) -> dict:
+    return customer.post("/api/customer/cart/items", {"variantPublicId": variant_public_id, "quantity": quantity}
+                         ).expect(200).body
+
+
+def cart_line(cart: dict, variant_public_id: str) -> dict:
+    lines = [l for g in cart["stores"] for l in g["lines"] if l["variantPublicId"] == variant_public_id]
+    assert len(lines) == 1, cart
+    return lines[0]
+
+
+def checkout_body(customer: Actor, cart_item_ids: list[str], payments: dict[str, str],
+                  address_public_id: str | None = None) -> dict:
+    return {"cartItemIds": cart_item_ids,
+            "addressPublicId": address_public_id or customer.extra["address"]["publicId"],
+            "payments": [{"storePublicId": s, "method": m} for s, m in payments.items()]}
+
+
+def checkout(customer: Actor, body: dict, key: str | bool = True):
+    return customer.post("/api/customer/checkout", body, idempotency_key=key)
+
+
+def place_order(customer: Actor, merchant: Actor, product: dict, quantity: int = 1, method: str = "COD",
+                variant_index: int = 0) -> dict:
+    """Cart line + checkout for one store; returns the customer's view of the new order."""
+    line = cart_line(add_to_cart(customer, variant_id(product, variant_index), quantity),
+                     variant_id(product, variant_index))
+    resp = checkout(customer, checkout_body(customer, [line["cartItemPublicId"]], {store_id(merchant): method}))
+    result = resp.expect(201).body["results"][0]
+    assert result["status"] == "PLACED", resp.describe()
+    return customer.get(f"/api/customer/orders/{result['orderPublicId']}").expect(200).body
+
+
+def quote_body(order: dict, courier_code: str = COURIER["code"], courier_charge: str = "350.00",
+               quantities: dict[str, int] | None = None, **extra: Any) -> dict:
+    """Keeps every line at its current quantity unless `quantities` (variantPublicId -> qty) says otherwise."""
+    quantities = quantities or {}
+    lines = [{"variantPublicId": i["variantPublicId"], "quantity": quantities.get(i["variantPublicId"], i["quantity"])}
+             for i in order["items"] if i["quantity"] > 0]
+    body = {"lines": lines, "courierCode": courier_code, "courierCharge": courier_charge}
+    body.update(extra)
+    return body
+
+
+def quote(actor: Actor, order: dict, **kw: Any) -> dict:
+    return actor.post(f"/api/merchant/orders/{order['publicId']}/quote", quote_body(order, **kw)).expect(200).body
+
+
+def confirm(customer: Actor, order: dict) -> dict:
+    return customer.post(f"/api/customer/orders/{order['publicId']}/confirm").expect(200).body
+
+
+def ship(actor: Actor, order: dict, courier_code: str = COURIER["code"], tracking: str | None = None) -> dict:
+    tracking = tracking or f"ITX{data.digits(8)}"
+    return actor.post(f"/api/merchant/orders/{order['publicId']}/ship",
+                      {"courierCode": courier_code, "trackingNumber": tracking}).expect(200).body
+
+
+def order_to_ready(customer: Actor, merchant: Actor, product: dict, quantity: int = 1) -> dict:
+    """A COD order placed, quoted and confirmed: READY_TO_SHIP."""
+    order = place_order(customer, merchant, product, quantity)
+    quote(merchant, order)
+    return confirm(customer, order)
+
+
+def order_to_shipped(customer: Actor, merchant: Actor, product: dict, quantity: int = 1) -> dict:
+    return ship(merchant, order_to_ready(customer, merchant, product, quantity))
+
+
+def new_shop(client: ApiClient, admin: Actor, label: str = "shop", cod: bool = True,
+             couriers: list[str] | None = None, price: str = "1000.00", stock: int = 50) -> Actor:
+    """A throwaway approved merchant with a ready store (bank account, couriers, FLAT template, COD on/off) and one
+    publicly visible ACTIVE product in `extra["product"]`."""
+    merchant = register_merchant(client, label)
+    approve_merchant(admin, merchant)
+    setup_merchant_store(merchant, cod=cod)
+    if couriers:
+        set_store_couriers(merchant, couriers)
+    product = create_active_product(merchant, simple_product_payload(price=price, stock=stock))
+    wait_publicly_visible(client, product)
+    merchant.extra["product"] = product
+    return merchant

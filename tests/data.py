@@ -74,6 +74,10 @@ def courier_code() -> str:
     return _code("ITC")
 
 
+def digits(count: int) -> str:
+    return "".join(random.choices(string.digits, k=count))
+
+
 def account_number() -> str:
     # Validation.ACCOUNT_NUMBER_REGEX ^\d{6,20}$
     return "".join(random.choices(string.digits, k=12))

@@ -150,3 +150,84 @@ product-service has no such handler either, so it is a regression there (stage 3
 - **N3-2:** the product-service README was rewritten in `b4081e6`. Its endpoint table (26 routes) matches the
   controllers, and the stage 3 behaviour tested here (status lifecycle, stock modes, discount rules, search filters,
   visibility) matches its descriptions. No README/code mismatch found in stage 3 scope.
+
+## Stage 4 (order-service)
+
+### S4-1: every checkout fails, because order-service sends store-service a locale-formatted date (service bug, blocker)
+
+- **Test:** every stage 4 test that places an order, for example
+  `tests/test_stage4_checkout.py::test_checkout_places_order`.
+- **Request:** `POST http://localhost:8083/api/customer/checkout` (customer token, `Idempotency-Key`) with one available
+  COD line of the shared merchant's store.
+- **Actual:** `422`, group `FAILED` with `"code":"SERVICE_UNAVAILABLE"` and `"message":"Store service is unavailable
+  (request failed): could not load the holiday calendar. Try again later."`. After a few failures the circuit
+  breaker opens, and later checkouts fail with `... (circuit breaker is open): could not load the store`.
+- **Expected:** `201`, order `AWAITING_MERCHANT` with a `MERCHANT_RESPONSE` deadline.
+- **Cause (reproduced):**
+  - Placing an order computes the merchant deadline (`OrderTimers` → `DeadlineCalculator` → `HolidayCalendar`).
+  - That calls `StoreServiceClient.holidays(@RequestParam("from") LocalDate from, @RequestParam("to") LocalDate to)`
+    (`order-service/.../client/StoreServiceClient.java`).
+  - Spring Cloud OpenFeign formats `@RequestParam` values with a `DefaultFormattingConversionService`. Without
+    `@DateTimeFormat(iso = DATE)` on the parameters, or a `FeignFormatterRegistrar` with ISO enabled
+    (`FeignConfig` has neither), it uses the JVM locale's SHORT style.
+  - The running order-service JVM is `en_US`, so it sends `?from=1/1/26&to=12/31/26`. With order-service's own
+    classpath, `new DefaultFormattingConversionService().convert(LocalDate.of(2026,1,1), String.class)` gives
+    `1/1/26`.
+  - store-service's `InternalPlatformController.holidays` expects ISO dates. With a service token,
+    `GET /internal/holidays?from=1/1/26&to=12/31/26` answers `500 INTERNAL_ERROR` (the S2-1 type-mismatch gap),
+    while `?from=2026-01-01&to=2026-12-31` answers `200 []`.
+  - `HolidayCalendar` has no cached year to fall back on, so the `ServiceUnavailableException` fails the checkout
+    group.
+- **Why the service's own tests miss it:** `order-service/src/test/.../support/Remote.java` stubs
+  `urlPathEqualTo("/internal/holidays")`, which ignores the query string.
+- **Fix:** `@DateTimeFormat(iso = DateTimeFormat.ISO.DATE)` on both `holidays` parameters (or ISO formatting for all
+  Feign clients through a `FeignFormatterRegistrar`). S2-1's handler would turn the 500 into a 400 but not fix this.
+  The quote, confirm, payment and ship deadlines use the same calendar, so all of stage 4 depends on this fix.
+- **Verdict:** service bug (blocker). **Fixed in the working tree, verified by the stage 4 checkout tests**: the
+  fix (`@DateTimeFormat(iso = ISO.DATE)` on both parameters) is uncommitted in the order-service working tree.
+  After restarting order-service with it, all order-placing tests in `test_stage4_checkout.py` pass.
+
+### S4-2: audit of inter-service calls for request parameters formatted without an explicit format (cross-service)
+
+Read-only search of every repo (api-gateway, config-server, service-registry, user, store, product, order) for code
+that calls another service: Feign interfaces (`@FeignClient`), `RestClient`, `WebClient`, `RestTemplate`. For each,
+the `@RequestParam` / `@PathVariable` parameters of type `LocalDate`, `LocalDateTime`, `Instant`, an enum, `UUID` or
+`BigDecimal` were checked for an explicit format.
+
+How Spring Cloud OpenFeign renders them: it uses a `DefaultFormattingConversionService` unless a
+`FeignFormatterRegistrar` changes it, and none of the three `FeignConfig` classes registers one. Checked with the
+services' own classpath, JVM locale `en_US`:
+
+| Type | Rendered as | Safe without a format? |
+|---|---|---|
+| `LocalDate` | `1/1/26` | **no**: depends on the JVM locale, not ISO |
+| `LocalDateTime` | `1/1/26, 1:05 PM` | **no** |
+| `Instant` | `2026-01-01T07:30:00Z` | yes (ISO) |
+| `UUID` | `123e4567-e89b-12d3-a456-426614174000` | yes |
+| enum | `COD` (`name()`) | yes |
+| `BigDecimal` | `1000.00`, but `1E+3` for a value built with a negative scale | mostly (`toString()`) |
+
+Every inter-service call with such a parameter:
+
+| Caller | Method | Parameter | Type | Explicit format | Verdict |
+|---|---|---|---|---|---|
+| order-service `client/StoreServiceClient` | `holidays` `GET /internal/holidays` | `from`, `to` (`@RequestParam`) | `LocalDate` | none | **broken: S4-1** |
+| order-service `client/StoreServiceClient` | `store`, `bankAccounts`, `couriers` `GET /internal/stores/{id}...` | `id` (`@PathVariable`) | `UUID` | none (not needed) | ok |
+| order-service `client/UserServiceClient` | `securityState` `GET /internal/users/{id}/security-state` | `id` (`@PathVariable`) | `UUID` | none (not needed) | ok |
+| product-service `client/UserServiceClient` | `securityState` (same route) | `id` | `UUID` | none (not needed) | ok |
+| store-service `client/UserServiceClient` | `securityState` (same route) | `id` | `UUID` | none (not needed) | ok |
+
+There are no other typed parameters. Every other inter-service method takes `String` path variables (`publicId`,
+`orderRef`), a JSON `@RequestBody` (serialized by Jackson, not the conversion service), or headers only:
+- order-service `ProductClient`: `quote`, `reserve`, `adjust`, `commit`, `release`
+- order-service `StoreServiceClient`: `storeByPublicId`, `settings`
+- order-service `UserServiceClient`: `serviceToken`, `myAddress`, `me`
+- product-service and store-service `UserServiceClient`: `serviceToken`
+
+user-service, config-server and service-registry make no calls to other services. The api-gateway's only client
+call is the JWKS fetch in `auth/JwtConfig` (`WebClient`, no parameters).
+
+- **Verdict:** one broken call (S4-1). No other call is affected today. Hardening, to stop it coming back: an
+  explicit ISO `@DateTimeFormat` on any future date/time parameter, or a `FeignFormatterRegistrar` with ISO enabled
+  in each service's `FeignConfig`. Also, the receiving controllers in store-service and user-service have no
+  `TypeMismatchException` handler (S1-2 / S2-1), so a badly formatted parameter shows up as a 500 there, not a 400.
